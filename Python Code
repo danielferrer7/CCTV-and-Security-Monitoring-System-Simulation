@@ -1,0 +1,104 @@
+import cv2
+import time
+from flask import Flask, render_template
+
+# Initialize Flask app
+app = Flask(__name__)
+
+# Motion Detection Function
+def start_cctv():
+    print("Initializing CCTV System...")
+    cap = cv2.VideoCapture(0)
+    first_frame = None
+    motion_log = []  # List to store motion events
+
+    # Check if the webcam is accessible
+    if not cap.isOpened():
+        print("Error: Unable to access the camera.")
+        return
+
+    print("Camera successfully accessed. Starting motion detection...")
+
+    while True:
+        ret, frame = cap.read()
+        if not ret:
+            print("Error: Failed to read video frame.")
+            break
+
+        # Convert frame to grayscale and blur it
+        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+        gray = cv2.GaussianBlur(gray, (21, 21), 0)
+
+        # Set the first frame for motion detection
+        if first_frame is None:
+            print("Setting up the reference frame...")
+            first_frame = gray
+            continue
+
+        # Calculate difference between first frame and current frame
+        delta_frame = cv2.absdiff(first_frame, gray)
+        thresh = cv2.threshold(delta_frame, 30, 255, cv2.THRESH_BINARY)[1]
+        thresh = cv2.dilate(thresh, None, iterations=2)
+
+        # Find motion contours
+        contours, _ = cv2.findContours(thresh.copy(), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        for contour in contours:
+            if cv2.contourArea(contour) < 1000:  # Ignore small motions
+                continue
+
+            # Draw rectangle around motion
+            (x, y, w, h) = cv2.boundingRect(contour)
+            cv2.rectangle(frame, (x, y), (x + w, y + h), (0, 255, 0), 2)
+
+            # Log the motion detection event
+            event = f"Motion detected at {time.strftime('%Y-%m-%d %H:%M:%S')}"
+            motion_log.append(event)
+            print(event)  # Print to console for debugging
+
+        # Display video feed and processed frames
+        cv2.imshow("CCTV Feed", frame)
+        cv2.imshow("Delta Frame", delta_frame)
+        cv2.imshow("Threshold Frame", thresh)
+
+        # Exit on pressing 'q'
+        key = cv2.waitKey(1) & 0xFF
+        if key == ord('q'):
+            print("Closing camera feed...")
+            break
+
+    # Release resources
+    print("Releasing resources...")
+    cap.release()
+    cv2.destroyAllWindows()
+
+    # Save motion log to a file
+    if motion_log:
+        print("Saving motion logs...")
+        with open("motion_log.txt", "w") as file:
+            file.write("\n".join(motion_log))
+        print("Logs saved to motion_log.txt")
+    else:
+        print("No motion detected. No logs to save.")
+
+# Flask Route to Display Logs
+@app.route("/")
+def index():
+    print("Serving the motion log web page...")
+    try:
+        with open("motion_log.txt", "r") as file:
+            logs = file.readlines()
+            print(f"Loaded {len(logs)} logs.")
+    except FileNotFoundError:
+        logs = ["No motion logs available."]
+        print("No motion logs found.")
+    return render_template("index.html", logs=logs)
+
+# Run Flask App
+if __name__ == "__main__":
+    print("Starting the application...")
+    try:
+        start_cctv()
+    except Exception as e:
+        print(f"An error occurred in the CCTV system: {e}")
+    print("Starting Flask web interface...")
+    app.run(debug=True)
